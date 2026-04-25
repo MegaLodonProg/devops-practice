@@ -1,0 +1,77 @@
+name: CI/CD Pipeline
+
+# Когда запускать
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+# Что умеет этот пайплайн
+jobs:
+  # JOB 1: Проверка Python кодаgit g
+  test-python:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Check Python syntax
+        run: |
+          python -m py_compile app/main.py
+      
+      - name: Run simple test
+        run: |
+          python -c "import sys; sys.path.append('app'); import main; print('Import successful')"
+
+  # JOB 2: Сборка и проверка Docker
+  build-and-test-docker:
+    runs-on: ubuntu-latest
+    needs: test-python  # запускается только после успешного test-python
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Build Docker image
+        run: |
+          docker build -t counter:test .
+      
+      - name: Run container in background
+        run: |
+          docker run -d -p 8080:5000 --name counter_test counter:test
+      
+      - name: Wait for app to start
+        run: |
+          sleep 3
+      
+      - name: Test if app responds
+        run: |
+          curl --fail http://localhost:8080 || exit 1
+      
+      - name: Check counter increments
+        run: |
+          FIRST=$(curl -s http://localhost:8080 | grep -oP 'Visitor #\K\d+')
+          SECOND=$(curl -s http://localhost:8080 | grep -oP 'Visitor #\K\d+')
+          echo "First: $FIRST, Second: $SECOND"
+          if [ "$SECOND" -ne "$((FIRST + 1))" ]; then
+            echo "Counter didn't increment correctly"
+            exit 1
+          fi
+          echo "Counter works correctly"
+      
+      - name: Cleanup
+        if: always()  # даже при ошибке почистим
+        run: |
+          docker stop counter_test || true
+          docker rm counter_test || true
